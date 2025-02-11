@@ -33,6 +33,3 @@ The Shared Calendar allows users to join groups and collaborate by sharing event
 - **Home**: Login/Register and navigate to Calendar or Groups
 - **Calendar**: View and manage events for the groups you’ve joined
 - **Groups**: Join, create, or manage groups
-
-## License
-This project is open-source. Feel free to contribute or modify it as needed.  
