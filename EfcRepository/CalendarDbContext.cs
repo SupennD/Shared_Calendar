@@ -11,8 +11,7 @@ namespace EfcRepository
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
-
-            // Configuring PostgreSQL using the connection string
+            
             optionsBuilder.UseSqlite(@"Data Source = ../EFCRepository/calendar.db");
         }
 
