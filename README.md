@@ -23,7 +23,7 @@ The Shared Calendar allows users to join groups and collaborate by sharing event
 ## How to Run
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/supendra-shared-calendar.git
+   git clone https://github.com/SupennD/Shared_Calendar.git
 
 2. Open the solution in your IDE (e.g., Visual Studio, Rider).
 3. Run the backend and frontend projects.
