@@ -1,0 +1,311 @@
+@page "/calendar"
+@using System.Globalization
+@using System.Security.Claims
+@using CalendarApp.Services
+@using DTOs
+@inject IEventService EventService
+@inject IGroupService GroupService
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@rendermode InteractiveServer
+
+<link href="viewCalendar.css" rel="stylesheet" />
+
+<PageTitle>Calendar</PageTitle>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="container mt-5">
+            <h1 class="text-center">Shared Calendar</h1>
+
+            <div class="d-flex justify-content-between align-items-center my-4">
+                <button class="btn btn-secondary" @onclick="PreviousMonth">&#8249; Previous</button>
+                <h2>@currentMonth.ToString("MMMM yyyy")</h2>
+                <button class="btn btn-secondary" @onclick="NextMonth">Next &#8250;</button>
+            </div>
+
+            <div class="row">
+                <div class="col-md-8">
+                    <table class="table table-bordered calendar-table">
+                        <thead>
+                            <tr>
+                                @foreach (var day in daysOfWeek)
+                                {
+                                    <th class="text-center">@day</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var week in weeks)
+                        {
+                            <tr>
+                                @foreach (var day in week)
+                                {
+                                    <td class="text-center calendar-cell @(selectedDay.HasValue && selectedDay.Value.Date == day?.Date ? "bg-secondary text-white" : day?.Date == DateTime.Today ? "text-danger" : "")" @onclick="() => SelectDate(day)">
+                                        @if (day != null)
+                                        {
+                                            <div class="fw-bold">@day.Value.Day</div>
+                                            @if (GetEventsForDay(day.Value).Count > 0)
+                                            {
+                                                <div class="text-end">
+                                                    <small class="badge bg-primary">@GetEventsForDay(day.Value).Count</small>
+                                                </div>
+                                                }
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="col-md-4">
+                    @if (selectedDay.HasValue)
+                    {
+                        <h3>Events on @selectedDay.Value.ToString("MMMM dd, yyyy")</h3>
+                        @if (eventsForSelectedDay.Count == 0)
+                        {
+                            <p>No events on this date.</p>
+                        }
+                        else
+                        {
+                            <ul class="list-group">
+                                @foreach (var eventItem in eventsForSelectedDay)
+                                {
+                                    <li class="list-group-item">
+                                        <h6 class="text-center mb-4 header-color" style="color: red;">From: @eventItem.CreatorName (@userGroups.FirstOrDefault(g => g.Id == eventItem.GroupId)?.Name)</h6>
+                                        <h5 class="mb-1 mt-1"><strong>Name:</strong> @eventItem.Name</h5>
+                                        <p class="mb-1"><strong>Description:</strong> @eventItem.Description</p>
+                                        <small><strong>Location:</strong> @eventItem.Location</small>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    }
+                </div>
+            </div>
+
+            <div class="my-4">
+                <button class="btn btn-primary" @onclick="ShowCreateEventForm" disabled="@(!isDaySelected)">Add Event</button>
+            </div>
+
+            @if (isEventFormVisible)
+            {
+                <div class="card mt-4">
+                    <div class="card-body">
+                        <h3>Create Event</h3>
+                        <form @onsubmit="CreateEvent">
+                            <div class="mb-3">
+                                <label for="groupSelection" class="form-label">Select Group</label>
+                                <select class="form-control" id="groupSelection" @bind="selectedGroupId" required>
+                                    <option value="">Select a group</option>
+                                    @foreach (var group in userGroups)
+                                    {
+                                        <option value="@group.Id">@group.Name</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="eventName" class="form-label">Event Name</label>
+                                <input type="text" id="eventName" class="form-control" @bind="eventName" required />
+                            </div>
+                            <div class="mb-3">
+                                <label for="eventDescription" class="form-label">Event Description</label>
+                                <input type="text" id="eventDescription" class="form-control" @bind="eventDescription" />
+                            </div>
+                            <div class="mb-3">
+                                <label for="eventLocation" class="form-label">Event Location</label>
+                                <input type="text" id="eventLocation" class="form-control" @bind="eventLocation" />
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create Event</button>
+                        </form>
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (errorMessage != null)
+        {
+            <div class="alert alert-danger mt-4">@errorMessage</div>
+        }
+    </Authorized>
+    <NotAuthorized>
+        <h3>Please log in to access the calendar</h3>
+        <div class="d-flex align-items-center gap-3 mt-3">
+            <button class="btn btn-primary" @onclick='() => Navigation.NavigateTo("login")'>Log in</button>
+            <button class="btn btn-secondary" @onclick='() => Navigation.NavigateTo("register")'>Register</button>
+        </div>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private DateTime currentMonth = DateTime.Today;
+    private string[] daysOfWeek = CultureInfo.CurrentCulture.DateTimeFormat.AbbreviatedDayNames;
+    private List<List<DateTime?>> weeks = new();
+    private List<EventDto> events = new();
+    private List<EventDto> eventsForSelectedDay = new();
+    private List<GroupDto> userGroups = new();
+    private string? errorMessage;
+    private DateTime? selectedDay;
+    private bool isDaySelected = false;
+    private bool isEventFormVisible = false;
+    private string eventName;
+    private string eventDescription;
+    private string eventLocation;
+    private int selectedGroupId;
+    private int? currentUserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCurrentUserAsync();
+        await LoadUserGroupsAsync();
+        await LoadEventsAsync();
+        GenerateCalendar();
+    }
+
+    private async Task LoadCurrentUserAsync()
+    {
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+
+            if (user.Identity is not null && user.Identity.IsAuthenticated)
+            {
+                var userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+                currentUserId = int.TryParse(userId, out var id) ? id : (int?)null;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading user: {ex.Message}";
+        }
+    }
+
+    private async Task LoadEventsAsync()
+    {
+        try
+        {
+            if (currentUserId.HasValue && userGroups.Any())
+            {
+                events = await EventService.GetEventsForGroupsAsync(userGroups.Select(g => g.Id).ToList());
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error fetching events: {ex.Message}";
+        }
+    }
+
+    private async Task LoadUserGroupsAsync()
+    {
+        try
+        {
+            if (currentUserId.HasValue)
+            {
+                userGroups = await GroupService.GetUserGroupsAsync(currentUserId.Value);
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error fetching user groups: {ex.Message}";
+        }
+    }
+
+    private void GenerateCalendar()
+    {
+        weeks.Clear();
+        DateTime firstDay = new DateTime(currentMonth.Year, currentMonth.Month, 1);
+        int daysInMonth = DateTime.DaysInMonth(currentMonth.Year, currentMonth.Month);
+        List<DateTime?> week = new();
+
+        for (int i = 0; i < (int)firstDay.DayOfWeek; i++)
+            week.Add(null);
+
+        for (int day = 1; day <= daysInMonth; day++)
+        {
+            week.Add(new DateTime(currentMonth.Year, currentMonth.Month, day));
+            if (week.Count == 7)
+            {
+                weeks.Add(week);
+                week = new List<DateTime?>();
+            }
+        }
+        if (week.Count > 0)
+            weeks.Add(week);
+    }
+
+    private async Task PreviousMonth()
+    {
+        currentMonth = currentMonth.AddMonths(-1);
+        await LoadEventsAsync();
+        GenerateCalendar();
+    }
+
+    private async Task NextMonth()
+    {
+        currentMonth = currentMonth.AddMonths(1);
+        await LoadEventsAsync();
+        GenerateCalendar();
+    }
+
+    private List<EventDto> GetEventsForDay(DateTime day)
+    {
+        return events.Where(e => e.StartTime?.Date == day.Date).ToList();
+    }
+
+    private void SelectDate(DateTime? day)
+    {
+        if (day.HasValue)
+        {
+            selectedDay = day.Value;
+            eventsForSelectedDay = GetEventsForDay(day.Value);
+            isDaySelected = true;
+            isEventFormVisible = false;
+        }
+    }
+
+    private void ShowCreateEventForm()
+    {
+        if (selectedDay.HasValue)
+        {
+            eventName = string.Empty;
+            eventDescription = string.Empty;
+            eventLocation = string.Empty;
+            selectedGroupId = 0;
+
+            isEventFormVisible = true;
+        }
+    }
+
+    private async Task CreateEvent()
+    {
+        if (selectedDay.HasValue && selectedGroupId > 0 && currentUserId.HasValue)
+        {
+            var createEventDto = new CreateEventDto
+            {
+                Name = eventName,
+                Description = eventDescription,
+                Location = eventLocation,
+                StartTime = selectedDay.Value,
+                EndTime = selectedDay.Value.AddHours(1),
+                GroupId = selectedGroupId,
+                CreatorId = currentUserId.Value
+            };
+
+            try
+            {
+                var createdEvent = await EventService.CreateEventAsync(createEventDto);
+                events.Add(createdEvent);
+                eventsForSelectedDay.Add(createdEvent);
+                isEventFormVisible = false;
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"Error creating event: {ex.Message}";
+            }
+        }
+    }
+}
